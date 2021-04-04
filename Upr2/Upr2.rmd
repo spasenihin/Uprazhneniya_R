@@ -1,0 +1,306 @@
+---
+title: "Упражнение 2"
+author: "Спасенихин Семён"
+date: "04 04 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+17 вариант
+Задание:
+
+Первый график постройте на данных по импорту продовольственных товаров в РФ в графической  системе ggplot2.  Данные  за  период  с  января  2010  по  декабрь  2020  гг. необходимо загрузить из базы данных международной торговли UN COMTRADE, как было показано  в  практиках  1-2.  Нас  интересует  эффект  от  введения  продовольственных санкций.
+Второй график постройте на данных, собранных в упражнении No1, в графической системе lattice.  Тип  графика  может  быть  любым,  при  этом  обязательно  должна присутствовать разбивка по категориям (например: годы, производители товара, жанры фильмов).
+
+Товар: пищевые субпродукты домашних животных, код 0206. График: плотности массы поставок по годам: 2013, 2014, 2019 и 2020, каждый год расположить на отдельной фасетке. Цветом показать периоды с января по август и с сентября по декабрь. Пропуски заменить на модельные значения.
+
+```{r}
+# Библиотека для работы с JSON
+library('rjson')
+# Адрес справочника по странам UN COMTRADE
+fileURL <- "http://comtrade.un.org/data/cache/partnerAreas.json"
+#Загрузка данных из формата JSON
+reporters <- fromJSON(file = fileURL)
+is.list(reporters)
+
+# Соединяем элементы списка построчно
+reporters <- t(sapply(reporters$results, rbind))
+dim(reporters)
+
+# Превращаем в DataFrame
+reporters <- as.data.frame(reporters)
+head(reporters)
+
+# Код России
+names(reporters) <- c('State.Code', 'State.Name.En')
+code_country <- reporters[reporters$State.Name.En == "Russian Federation", ]$State.Code
+
+# Загружаем функцию реализации API
+source("https://raw.githubusercontent.com/aksyuk/R-data/master/API/comtrade_API.R")
+
+data.dir <- './data'
+
+# Создаем директорию для данных
+if (!file.exists(data.dir)) {
+  dir.create(data.dir)
+}
+
+code_product <- '0206'
+
+for (i in 2010:2020){
+  Sys.sleep(5)
+  s1 <- get.Comtrade(r = 'all', p = code_country,
+                     ps = as.character(i), freq = "M",
+                     rg = '1', cc = code_product,
+                     fmt = 'csv')
+  # Имя файла для сохранения
+  file.name <- paste('./data/comtrade_', i, '.csv', sep = '')
+  # Запись данных в файл
+  write.csv(s1$data, file.name, row.names = F)
+  print(paste("Данные за", i, "год загружены в файл",file.name, "!"))
+  write(paste('Файл',
+              paste('comtrade_', i, '.csv', sep = ''),
+              'загржен', Sys.time()), file = './data/download.log', append=T)
+}
+```
+
+```{r}
+library('stringr')
+library('ggplot2')
+library('gridExtra')
+library('data.table')
+
+DF <- data.frame()
+for (year in 2010:2020){
+  # Считываем данные из .csv файла
+  df <- read.csv(paste('./data/comtrade_', year, '.csv', sep=''), header = TRUE, sep=',')
+  df <- df[, c(2, 4, 10, 30, 32)]
+  # Заполняем основной дата фрейм
+  DF <- rbind(DF, df)
+}
+
+DF <- data.table(DF)
+
+# Замена пропусков (NA) на модельные значения
+# Переменные: масса поставки и ее стоимость
+x <- DF$Trade.Value..US..
+y <- DF$Netweight..kg.
+
+# Оценка регрессии с помощью МНК
+fit <- lm(y ~ x)
+summary(fit)
+
+# R - квадрат
+R.sq <- summary(fit)$r.squared
+
+# Строим график разброса переменных X и Y с линией регрессии
+plot(x, y,
+     xlab = 'Стоимость поставки, долл.США',
+     ylab = 'Масса поставки, кг',
+     pch = 21, col = rgb(0, 0, 0, alpha = 0.4), 
+     bg = rgb(0, 0, 0, alpha = 0.4))
+abline(fit, col = rgb(0, 0, 1), lwd = 2)
+mtext(paste('Прямая линейная зваимосвязь, R^2=',
+            round(R.sq*100, 1),
+            '%', sep = ''),
+      side = 3, line = 1)
+
+# Координаты пропущенных y по оси x
+NAs <- DF[is.na(Netweight..kg.), Trade.Value..US..]
+points(x = NAs, y = rep(0, length(NAs)),
+       col = 'red', pch = '|')
+
+# Рассмотрим участок, на котором значения по осям лежат в интервалах от 0 до 5 000
+plot(x, y, 
+     xlab = 'Стоимость поставки, долл.США', 
+     ylab = 'Масса поставки, кг',
+     pch = 21, col = rgb(0, 0, 0, alpha = 0.4), 
+     bg = rgb(0, 0, 0, alpha = 0.4),
+     xlim = c(0, 5000), ylim = c(0, 5000))
+abline(fit, col = rgb(0, 0, 1), lwd = 2)
+points(x = NAs, y = rep(0, length(NAs)), 
+ col = 'red', pch = '|') 
+
+# Пробуем регрессию на логарифмах
+y[y == 0] <- NA
+fit.log <- lm(log(y) ~ log(x))
+summary(fit.log)
+
+R.sq.log <- summary(fit.log)$r.squared 
+
+# Построим график разброса
+plot(log(x), log(y), 
+     xlab = 'Логарифмы стоимости поставки', 
+     ylab = 'Логарифмы массы поставки',
+     pch = 21, col = rgb(0, 0, 0, alpha = 0.4), 
+     bg = rgb(0, 0, 0, alpha = 0.4))
+# Добавляем прямую регрессии на график
+abline(fit.log, col = rgb(0, 0, 1), lwd = 2)
+# Добавляем название графика
+mtext(paste('Прямая линейная взаимосвязь, R^2=',
+      round(R.sq.log*100, 1),
+      '%', sep = ''), 
+      side = 3, line = 1)
+points(x = log(NAs), y = rep(0, length(NAs)), 
+       col = 'red', pch = '|')
+
+# Новый столбец, в котором будут заполнены пропуски
+DF[, Netweight..kg.model := Netweight..kg.]
+
+# Прогноз по модели на логарифмах
+y.model.log <- predict(fit.log,
+                       newdata = data.frame(x = NAs))
+
+# Исходные единицы измерения Y
+y.model <- exp(y.model.log)
+
+# Заменяем пропуски модельными значениями
+DF[is.na(Netweight..kg.model),
+   Netweight..kg.model := round(y.model, 0)]
+
+# результат
+DF <- DF[, c(1, 2, 3, 6)]
+DF
+
+df1 <- data.frame(Year = numeric(), Period.Desc. = character(), Reporter = character(), Netweight..kg.model = numeric(), Period = character())
+df2 <- data.frame(Year = numeric(), Period.Desc. = character(), Reporter = character(), Netweight..kg.model = numeric(), Period = character())
+
+for (year in c(2013, 2014, 2019, 2020)){
+  for (m in month.name[1:6]){
+    df1 <- rbind(df1, cbind(DF[DF$Year == year & str_detect(DF$Period.Desc., m), ], data.frame(Period = 'янв-авг')))
+  }
+  for (m in month.name[7:12]){
+    df2 <- rbind(df2, cbind(DF[DF$Year == year & str_detect(DF$Period.Desc., m), ], data.frame(Period = 'сен-дек')))
+  }
+}
+df <- rbind(df1, df2)
+df
+
+png('density_ggplot.png', width = 1000, height= 1000)
+ggplot(df, aes(y = Netweight..kg.model, group = Period, color = Period)) +
+  geom_density() + facet_grid(. ~ Year) +
+  coord_flip() + scale_color_manual(values = c('red', 'blue'),
+                                    name = 'Период') +
+  labs(title = 'График плотности массы поставок по годам',
+       y = 'Масса', x = 'Плотность')
+dev.off()
+```
+
+```{r}
+library('XML')                 # разбор XML-файлов
+library('RCurl')               # работа с HTML-страницами
+library('rjson')               # чтение формата JSON
+library('rvest')               # работа с DOM сайта
+library('dplyr')               # инструменты трансформирования данных
+library('httr')
+library('stringr')
+
+# Ссылка на сайт с книгами Лабиринт, иностранные книги
+url <- 'https://www.labirint.ru/genres/965/'
+
+html <- GET(url)
+html <- content(html, 'text')
+
+parsedHTML <- htmlParse(html, useInternalNodes = TRUE, encoding = 'UTF-8')
+# Парсим названия книг
+name <- xpathSApply(parsedHTML, '//span[@class="product-title"]', xmlValue)
+name <- trimws(name, which = 'both', whitespace = '[ \t\r\n]')
+
+name <- name[15:73]
+name
+
+# Парсим цену книг
+price <- xpathSApply(parsedHTML, '//span[@class="price-val"]', xmlValue)
+# Избавляемся от лишних знаков, кириллицы, пробелов в начале и конце
+Encoding(price) <- "UTF-8"
+price <- iconv(price, 'latin1', 'ASCII', sub = "")
+price <- trimws(price, which = 'both', whitespace = '[ \t\r\n]')
+price <- price[15:73]
+# Избавляемся от пробелов
+price <- gsub(pattern = '\\s', replacement = "", x = price)
+price <- as.numeric(price)
+price
+
+
+pubhouse <- xpathSApply(parsedHTML, '//a[@class="product-pubhouse__pubhouse"]', xmlValue)
+pubhouse <- pubhouse[15:73]
+pubhouse
+
+pubhouse.series <- xpathSApply(parsedHTML, '//div[@class="product-pubhouse"]', xmlValue)
+pubhouse.series <- pubhouse.series[15:73]
+
+pubhouse.series.array <- array()
+for (book in strsplit(as.character(pubhouse.series), '\n')){
+  if(length(book) == 6){
+    series <- book[4]
+    series <- trimws(series, which = 'both', whitespace = '[ \t\r\n]')
+    pubhouse.series.array <- append(pubhouse.series.array, series)
+  }else{
+    pubhouse.series.array <- append(pubhouse.series.array, NA)
+  }
+}
+
+pubhouse.series <- pubhouse.series.array[2:60]
+pubhouse.series
+
+# Парсим количество фото
+photo <- xpathSApply(parsedHTML, '//div[@class="product-cover__cover-wrapper"]', xmlValue)
+photo <- photo[15:73]
+#book_photo
+
+photo.array <- array()
+for(book in photo){
+  if(str_detect(book, 'фото')){
+    p <- strsplit(as.character(book), ' фото')[[1]][1]
+    count_photo <- strsplit(as.character(p), '\n')[[1]]
+    len.photo <- length(count_photo)
+    count_photo <- count_photo[len.photo]
+    count_photo <- trimws(count_photo, which = 'both', whitespace = '[ \t\r\n]')
+    count_photo <- as.numeric(count_photo)
+    photo.array <- append(photo.array, count_photo)
+  }else{
+    photo.array <- append(photo.array, NA)
+  }
+}
+photo <- photo.array[2:60]
+photo
+
+# Оформляем все в дата фрейм
+DF <- data.frame(Name = name, Izdatel = pubhouse,
+                 Izdanie_series = pubhouse.series,
+                 Price = price, Count_photo = photo)
+
+data.dir <- './data'
+
+# Создаем директорию для данных
+if (!file.exists(data.dir)) {
+  dir.create(data.dir)
+}
+
+# Создаём файл с логом загрузок
+log.filename <- './data/download.log'
+if (!file.exists(log.filename)) file.create(log.filename)
+
+# Загружаем данные в .csv файл
+write.csv(DF, file = './data/labirint_ru.csv', row.names = FALSE)
+write(paste('Файл "labirint_ru.csv" записан!', Sys.time()), file = log.filename, append = TRUE)
+```
+
+```{r}
+library('lattice')
+
+# Загружаем данные из файла
+DF <- read.csv('./data/labirint_ru.csv', header = TRUE, sep = ',')
+DF
+
+# Строим график lattice
+png('density_lattice.png', width=1000, height=1000)
+densityplot( ~ Price | as.factor(Izdatel), data = DF,
+            main = 'Распределение цены книг по издателям',
+            xlab = 'Цена',
+            ylab = 'Плотность')
+dev.off()
+```
