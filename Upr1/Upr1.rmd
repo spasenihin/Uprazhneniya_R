@@ -1,0 +1,116 @@
+---
+title: "Упражнение 1"
+author: "Спасенихин Семён"
+date: "04 04 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+17 вариант
+
+С помощью пакета rvestили парсинга XMLс помощью xpath запросов соберите данные с сайта согласно своему варианту. В итоговой таблице должно быть не менее 50 записей и не менее 5 признаков, из которых как минимум два количественных. Снабдите файл справочником в формате Markdown.
+
+Лабиринт, иностранные книги (https://www.labirint.ru/genres/965/)
+
+```{r}
+library('XML')                 # разбор XML-файлов
+library('RCurl')               # работа с HTML-страницами
+library('rjson')               # чтение формата JSON
+library('rvest')               # работа с DOM сайта
+library('dplyr')               # инструменты трансформирования данных
+library('httr')
+library('stringr')
+
+# Ссылка на сайт с книгами Лабиринт, иностранные книги
+url <- 'https://www.labirint.ru/genres/965/'
+
+html <- GET(url)
+html <- content(html, 'text')
+
+parsedHTML <- htmlParse(html, useInternalNodes = TRUE, encoding = 'UTF-8')
+# Парсим названия книг
+name <- xpathSApply(parsedHTML, '//span[@class="product-title"]', xmlValue)
+name <- trimws(name, which = 'both', whitespace = '[ \t\r\n]')
+
+name <- name[15:73]
+name
+
+# Парсим цену книг
+price <- xpathSApply(parsedHTML, '//span[@class="price-val"]', xmlValue)
+# Избавляемся от лишних знаков, кириллицы, пробелов в начале и конце
+Encoding(price) <- "UTF-8"
+price <- iconv(price, 'latin1', 'ASCII', sub = "")
+price <- trimws(price, which = 'both', whitespace = '[ \t\r\n]')
+price <- price[15:73]
+# Избавляемся от пробелов
+price <- gsub(pattern = '\\s', replacement = "", x = price)
+price <- as.numeric(price)
+price
+
+
+pubhouse <- xpathSApply(parsedHTML, '//a[@class="product-pubhouse__pubhouse"]', xmlValue)
+pubhouse <- pubhouse[15:73]
+pubhouse
+
+pubhouse.series <- xpathSApply(parsedHTML, '//div[@class="product-pubhouse"]', xmlValue)
+pubhouse.series <- pubhouse.series[15:73]
+
+pubhouse.series.array <- array()
+for (book in strsplit(as.character(pubhouse.series), '\n')){
+  if(length(book) == 6){
+    series <- book[4]
+    series <- trimws(series, which = 'both', whitespace = '[ \t\r\n]')
+    pubhouse.series.array <- append(pubhouse.series.array, series)
+  }else{
+    pubhouse.series.array <- append(pubhouse.series.array, NA)
+  }
+}
+
+pubhouse.series <- pubhouse.series.array[2:60]
+pubhouse.series
+
+# Парсим количество фото
+photo <- xpathSApply(parsedHTML, '//div[@class="product-cover__cover-wrapper"]', xmlValue)
+photo <- photo[15:73]
+#book_photo
+
+photo.array <- array()
+for(book in photo){
+  if(str_detect(book, 'фото')){
+    p <- strsplit(as.character(book), ' фото')[[1]][1]
+    count_photo <- strsplit(as.character(p), '\n')[[1]]
+    len.photo <- length(count_photo)
+    count_photo <- count_photo[len.photo]
+    count_photo <- trimws(count_photo, which = 'both', whitespace = '[ \t\r\n]')
+    count_photo <- as.numeric(count_photo)
+    photo.array <- append(photo.array, count_photo)
+  }else{
+    photo.array <- append(photo.array, NA)
+  }
+}
+photo <- photo.array[2:60]
+photo
+
+# Оформляем все в дата фрейм
+DF <- data.frame(Name = name, Izdatel = pubhouse,
+                 Izdanie_series = pubhouse.series,
+                 Price = price, Count_photo = photo)
+
+data.dir <- './data'
+
+# Создаем директорию для данных
+if (!file.exists(data.dir)) {
+  dir.create(data.dir)
+}
+
+# Создаём файл с логом загрузок
+log.filename <- './data/download.log'
+if (!file.exists(log.filename)) file.create(log.filename)
+
+# Загружаем данные в .csv файл
+write.csv(DF, file = './data/labirint_ru.csv', row.names = FALSE)
+write(paste('Файл "labirint_ru.csv" записан!', Sys.time()), file = log.filename, append = TRUE)
+```
